@@ -47,7 +47,7 @@ async function connectDB() {
     if (!cached.promise) {
         const opts = { bufferCommands: false, serverSelectionTimeoutMS: 5000, socketTimeoutMS: 45000 };
         cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
-            console.log('✔ New MongoDB Connection Established');
+            console.log('âœ… New MongoDB Connection Established');
             return mongoose;
         });
     }
@@ -57,7 +57,7 @@ async function connectDB() {
 
 app.use(async (req, res, next) => {
     try { await connectDB(); next(); } 
-    catch (error) { console.error("✖ DB Error:", error); res.status(500).json({ error: "Database connection failed" }); }
+    catch (error) { console.error("âŒ DB Error:", error); res.status(500).json({ error: "Database connection failed" }); }
 });
 // -------------------------------------
 
@@ -98,7 +98,7 @@ function getFileHash(buffer) {
     return crypto.createHash('md5').update(buffer).digest('hex');
 }
 
-// --- ⏳ AUTO-EXPIRE UNPAID LOCKS ---
+// --- â³ AUTO-EXPIRE UNPAID LOCKS ---
 async function expireUnpaidOrders() {
     try {
         const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
@@ -110,7 +110,7 @@ async function expireUnpaidOrders() {
         });
 
         if (expiredOrders.length > 0) {
-            console.log(`⏳ Found ${expiredOrders.length} expired orders. cleaning up...`);
+            console.log(`â³ Found ${expiredOrders.length} expired orders. cleaning up...`);
             
             for (const order of expiredOrders) {
                 // 1. Mark Order as Cancelled
@@ -187,26 +187,8 @@ app.put('/api/user/state', authMiddleware, async (req, res) => {
 });
 
 // --- LIVESTOCK ---
-
-// PUBLIC LIST: lightweight, paginated, excluding binary buffers
-// GET /api/livestock?limit=100&page=1
 app.get('/api/livestock', async (req, res) => {
-    try {
-        const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
-        const page = Math.max(parseInt(req.query.page) || 1, 1);
-        const skip = (page - 1) * limit;
-
-        // Exclude binary fields
-        const [items, total] = await Promise.all([
-            Livestock.find({}, { 'image.data': 0, 'images.data': 0 }).sort({ createdAt: -1 }).skip(skip).limit(limit),
-            Livestock.countDocuments()
-        ]);
-
-        res.json({ livestock: items, total, page, limit });
-    } catch (err) {
-        console.error("List Livestock Error:", err);
-        res.status(500).json({ error: err.message });
-    }
+    try { const livestock = await Livestock.find({}, '-image'); res.json(livestock); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/livestock/image/:id', async (req, res) => {
@@ -232,49 +214,17 @@ app.get('/api/livestock/image/:id/:index', async (req, res) => {
 });
 
 // --- ADMIN ROUTES ---
-
-// ADMIN: lightweight list with imagesCount (no binary)
 app.get('/api/admin/livestock', async (req, res) => {
-    try {
-        const limit = Math.min(Math.max(parseInt(req.query.limit) || 200, 1), 1000);
-        const page = Math.max(parseInt(req.query.page) || 1, 1);
-        const skip = (page - 1) * limit;
-
-        const pipeline = [
-            { $sort: { createdAt: -1 } },
-            { $skip: skip },
-            { $limit: limit },
-            {
-                $project: {
-                    name: 1,
-                    type: 1,
-                    breed: 1,
-                    age: 1,
-                    weight: 1,
-                    price: 1,
-                    tags: 1,
-                    status: 1,
-                    createdAt: 1,
-                    imagesCount: { $size: { $ifNull: ["$images", []] } }
-                }
-            }
-        ];
-
-        const livestock = await Livestock.aggregate(pipeline);
-        const total = await Livestock.countDocuments();
-
-        res.json({ livestock, total, page, limit });
-    } catch (err) {
-        console.error("Admin Livestock List Error:", err);
-        res.status(500).json({ message: 'Failed', error: err.message });
-    }
+    try { const livestock = await Livestock.find({}, '-image').sort({ createdAt: -1 }); res.json({ livestock }); } catch (err) { res.status(500).json({ message: 'Failed', error: err.message }); }
 });
 
 // ðŸŸ¢ FIX APPLIED HERE: Added 'age' extraction and multiple images support
 app.post('/api/admin/livestock', upload.array('images', 10), async (req, res) => {
     try {
+        // Extract all necessary fields, including 'age' which was missing before
         const { name, type, breed, price, tags, status, weight, age } = req.body;
 
+        // Handle multiple images
         let images = [];
         if (req.files && req.files.length > 0) {
             images = req.files.map(file => ({
@@ -283,10 +233,13 @@ app.post('/api/admin/livestock', upload.array('images', 10), async (req, res) =>
             }));
         }
 
+        // Backward compatibility: use first image as main image
         const image = images.length > 0 ? images[0] : undefined;
 
         let tagArray = tags && typeof tags === 'string' ? tags.split(',') : [];
 
+        // Construct new item including 'age' and multiple images
+        // If 'age' is not provided, we try to derive it from 'weight' as a fallback string
         const newItem = new Livestock({
             name,
             type,
@@ -313,11 +266,13 @@ app.put('/api/admin/livestock/:id', upload.array('images', 10), async (req, res)
         const updates = { ...req.body };
         if (updates.price) updates.price = parseFloat(updates.price);
 
+        // Handle multiple images if uploaded
         if (req.files && req.files.length > 0) {
             updates.images = req.files.map(file => ({
                 data: file.buffer,
                 contentType: file.mimetype
             }));
+            // Backward compatibility: use first image as main image
             updates.image = updates.images[0];
         }
 
@@ -332,7 +287,9 @@ app.delete('/api/admin/livestock/:id', async (req, res) => {
 
 app.get('/api/admin/orders', async (req, res) => {
     try {
+        // Trigger lazy cleanup on fetch to ensure admin sees up-to-date states
         await expireUnpaidOrders();
+        // Exclude image data for performance
         const orders = await Order.find({}, '-paymentProof.data').sort({ createdAt: -1 });
         res.json({ orders });
     } catch (err) { res.status(500).json({ message: 'Failed to load orders', error: err.message }); }
@@ -347,11 +304,12 @@ app.get('/api/admin/orders/proof/:id', async (req, res) => {
     } catch (err) { res.status(500).send('Server Error'); }
 });
 
-// ✔ Reject Payment & Restock Items
+// âœ… Reject Payment & Restock Items
 app.put('/api/admin/orders/:id/reject', async (req, res) => {
     try {
         const { reason } = req.body;
         
+        // 1. Update Order Status
         const order = await Order.findByIdAndUpdate(
             req.params.id, 
             { 
@@ -363,6 +321,7 @@ app.put('/api/admin/orders/:id/reject', async (req, res) => {
         
         if (!order) return res.status(404).json({ message: 'Order not found' });
 
+        // 2. ðŸŸ¢ RESTOCK LOGIC: Set status back to 'Available' for all items in order
         const itemIds = order.items.map(item => item._id);
         if (itemIds.length > 0) {
             await Livestock.updateMany(
@@ -371,6 +330,7 @@ app.put('/api/admin/orders/:id/reject', async (req, res) => {
             );
         }
 
+        // 3. Notify User
         await User.findByIdAndUpdate(order.userId, { 
             $push: { notifications: {
                 id: 'rej_' + Date.now(), 
@@ -422,7 +382,7 @@ app.put('/api/orders/:id/reupload', authMiddleware, upload.single('paymentProof'
     try {
         if (!req.file) return res.status(400).send('No file uploaded');
 
-        // DUPLICATE CHECK
+        // ðŸ”’ DUPLICATE CHECK
         const fileHash = getFileHash(req.file.buffer);
         const existingProof = await ProofHash.findOne({ hash: fileHash });
         if (existingProof && existingProof.orderId.toString() !== req.params.id) {
@@ -444,6 +404,7 @@ app.put('/api/orders/:id/reupload', authMiddleware, upload.single('paymentProof'
             { upsert: true, new: true }
         );
 
+        // ðŸ”” NOTIFY ADMIN
         await AdminNotification.create({
             message: `Proof Re-uploaded for Order #${order._id.toString().slice(-6)} by ${req.user.name}`,
             type: 'info',
@@ -469,7 +430,7 @@ app.post('/api/orders', authMiddleware, upload.single('paymentProof'), async (re
         let fileHash;
 
         if (req.file) {
-            // DUPLICATE CHECK
+            // ðŸ”’ DUPLICATE CHECK
             fileHash = getFileHash(req.file.buffer);
             const existingProof = await ProofHash.findOne({ hash: fileHash });
             if (existingProof) {
@@ -483,7 +444,7 @@ app.post('/api/orders', authMiddleware, upload.single('paymentProof'), async (re
 
         if (fileHash) {
             await ProofHash.create({ hash: fileHash, orderId: newOrder._id });
-             // NOTIFY ADMIN
+             // ðŸ”” NOTIFY ADMIN
             await AdminNotification.create({
                 message: `New Order #${newOrder._id.toString().slice(-6)} Created with Proof`,
                 type: 'success',
@@ -534,6 +495,8 @@ app.get('/api/orders/:id/invoice', authMiddleware, async (req, res) => {
         const order = await Order.findById(req.params.id);
         if (!order) return res.status(404).send('Order not found');
 
+        // Security check: only the owner or an admin can see the invoice
+        // (Assuming req.user is populated by authMiddleware)
         if (order.userId.toString() !== req.user.id) {
              return res.status(403).send('Access denied');
         }
@@ -594,13 +557,13 @@ app.get('/api/orders/:id/invoice', authMiddleware, async (req, res) => {
                             <td>${item.name}</td>
                             <td>${item.breed}</td>
                             <td>${item.type}</td>
-                            <td style="text-align: right">₹${item.price.toLocaleString('en-IN')}</td>
+                            <td style="text-align: right">â‚¹${item.price.toLocaleString('en-IN')}</td>
                         </tr>
                     `).join('')}
                 </tbody>
             </table>
 
-            <div class="total">Grand Total: ₹${order.total.toLocaleString('en-IN')}</div>
+            <div class="total">Grand Total: â‚¹${order.total.toLocaleString('en-IN')}</div>
 
             <div class="footer">
                 Thank you for your purchase from Livestock Mart.<br>
@@ -628,7 +591,7 @@ app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'adm
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (require.main === module) {
-    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+    app.listen(PORT, () => console.log(`ðŸš€ Server running on port ${PORT}`));
 }
 
 module.exports = app;

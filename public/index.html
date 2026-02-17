@@ -3061,6 +3061,33 @@ setLang("en");
       });
     </script>
     
+
+<script>
+document.addEventListener("DOMContentLoaded", async () => {
+    try {
+        const res = await fetch("/api/auth/me", { credentials: "include" });
+        if (!res.ok) {
+            document.getElementById("auth-screen")?.classList.remove("hidden");
+            document.getElementById("user-app")?.classList.add("hidden");
+            return;
+        }
+        const data = await res.json();
+        if (data.user) {
+            window.currentUser = data.user;
+            document.getElementById("auth-screen")?.classList.add("hidden");
+            document.getElementById("user-app")?.classList.remove("hidden");
+        } else {
+            document.getElementById("auth-screen")?.classList.remove("hidden");
+            document.getElementById("user-app")?.classList.add("hidden");
+        }
+    } catch (err) {
+        console.error("Session restore failed:", err);
+        document.getElementById("auth-screen")?.classList.remove("hidden");
+        document.getElementById("user-app")?.classList.add("hidden");
+    }
+});
+</script>
+
 </body>
 </html>
 

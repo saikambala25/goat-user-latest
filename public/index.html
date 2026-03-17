@@ -836,7 +836,7 @@
     </div>
     
     <script>
-        const API_URL = 'https://goat-user-latest.edgeone.app/api';
+        const API_URL = 'https://goat-user-latest.vercel.app/api';
         let livestock = [];
         let orders = [];
         let cart = []; 
@@ -3033,7 +3033,7 @@ setLang("en");
 
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./service-worker.js')
+          navigator.serviceWorker.register('./')
             .then(reg => console.log('Service Worker registered'))
             .catch(err => console.log('Service Worker Error:', err));
         });

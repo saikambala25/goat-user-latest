@@ -1,0 +1,4 @@
+{
+  "runtime": "Nodejs16.13",
+  "handler": "server.handler"
+}

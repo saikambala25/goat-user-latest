@@ -1,0 +1,6 @@
+{
+  "runtime": "Nodejs18.15",
+  "handler": "index.main_handler",
+  "memorySize": 512,
+  "timeout": 10
+}
